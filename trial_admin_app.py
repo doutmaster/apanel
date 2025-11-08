@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-BalkanHDplus — Trial & Paid Admin (Standalone v7.1.0)
+BalkanHDplus — Trial & Paid Admin (Standalone v7.2.0)
+- Settings page: paste JSON to update config.json (live reload; PORT needs restart)
 - Safe JS (no leaked script outside strings)
 - Working WU/Crypto "Generiši" with copy-ready text
 - Trials/Clients dashboards with search + CSV export
 - CSV exports use csv.writer (no quoting bugs)
+- Hardened panel user-id extraction & form defaults
 """
 
 import os, time, json, re, secrets, string, requests, sqlite3, io, csv
@@ -21,6 +23,7 @@ DB_PATH  = os.path.join(APP_DIR, "admin.db")
 # ---------------- Config ----------------
 def load_cfg() -> dict:
     defaults = {
+        "PORT": 8088,
         "BRAND": "BalkanHDplus",
         "ADMIN_TOKEN": "ADMIN",
         "PANEL_BASE": "",
@@ -45,22 +48,31 @@ def load_cfg() -> dict:
     }
     if not os.path.exists(CFG_PATH):
         try:
-            with open(CFG_PATH, "w", encoding="utf-8") as f: json.dump(defaults, f, indent=2, ensure_ascii=False)
+            with open(CFG_PATH, "w", encoding="utf-8") as f:
+                json.dump(defaults, f, indent=2, ensure_ascii=False)
         except Exception:
             pass
         return dict(defaults)
     try:
-        with open(CFG_PATH, "r", encoding="utf-8") as f: loaded = json.load(f)
+        with open(CFG_PATH, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
         merged = dict(defaults); merged.update(loaded or {})
         return merged
     except Exception:
         return dict(defaults)
 
+def _normalize_panel_base(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = s.strip()
+    return s if s.endswith("/") else (s + "/")
+
 CFG = load_cfg()
 
+# ---- globals bound from CFG (reloaded live) ----
 BRAND          = CFG.get('BRAND', 'BalkanHDplus')
 ADMIN_TOKEN    = str(CFG.get('ADMIN_TOKEN', 'ADMIN'))
-PANEL_BASE     = CFG.get('PANEL_BASE', '')
+PANEL_BASE     = _normalize_panel_base(CFG.get('PANEL_BASE', ''))
 PANEL_USER     = CFG.get('PANEL_USER', '')
 PANEL_PASS     = CFG.get('PANEL_PASS', '')
 PANEL_PIN      = CFG.get('PANEL_PIN', '')
@@ -83,6 +95,49 @@ SOL_ADDR  = CFG.get("SOL_ADDR", "5CWmau5ecXGwjQC5Ccjp6YT13uHN6k2qP7E1LkxAaxtY")
 TUTORIALS_URL = CFG.get('TUTORIALS_URL', "https://www.balkanhdplus.com/#tutorials")
 STREAM_HOST   = CFG.get('STREAM_HOST',   "http://balkanhdplus1.com:8080")
 TRIAL_HOURS   = int(CFG.get('TRIAL_HOURS', 48))
+PORT          = int(CFG.get('PORT', 8088))
+
+def _apply_cfg_to_globals(cfg: dict):
+    global BRAND, ADMIN_TOKEN, PANEL_BASE, PANEL_USER, PANEL_PASS, PANEL_PIN, PANEL_MEMBER_ID
+    global PANEL_TIMEZONE, BOUQUETS, PKG_TRIAL, PKG_1M, PKG_3M, PKG_12M
+    global PRICE_1M, PRICE_3M, PRICE_12M, ETH_ADDR, SOL_ADDR
+    global TUTORIALS_URL, STREAM_HOST, TRIAL_HOURS
+
+    BRAND          = cfg.get('BRAND', BRAND)
+    ADMIN_TOKEN    = str(cfg.get('ADMIN_TOKEN', ADMIN_TOKEN))
+    PANEL_BASE     = _normalize_panel_base(cfg.get('PANEL_BASE', PANEL_BASE))
+    PANEL_USER     = cfg.get('PANEL_USER', PANEL_USER)
+    PANEL_PASS     = cfg.get('PANEL_PASS', PANEL_PASS)
+    PANEL_PIN      = cfg.get('PANEL_PIN', PANEL_PIN)
+    PANEL_MEMBER_ID= cfg.get('PANEL_MEMBER_ID', PANEL_MEMBER_ID)
+    PANEL_TIMEZONE = cfg.get('PANEL_TIMEZONE', PANEL_TIMEZONE)
+    BOUQUETS       = cfg.get('BOUQUETS', BOUQUETS) or []
+    PKG_TRIAL      = str(cfg.get('PKG_TRIAL', PKG_TRIAL))
+    PKG_1M         = str(cfg.get('PKG_1M', PKG_1M))
+    PKG_3M         = str(cfg.get('PKG_3M', PKG_3M))
+    PKG_12M        = str(cfg.get('PKG_12M', PKG_12M))
+    PRICE_1M       = float(cfg.get('PRICE_1M', PRICE_1M))
+    PRICE_3M       = float(cfg.get('PRICE_3M', PRICE_3M))
+    PRICE_12M      = float(cfg.get('PRICE_12M', PRICE_12M))
+    ETH_ADDR       = cfg.get('ETH_ADDR', ETH_ADDR)
+    SOL_ADDR       = cfg.get('SOL_ADDR', SOL_ADDR)
+    TUTORIALS_URL  = cfg.get('TUTORIALS_URL', TUTORIALS_URL)
+    STREAM_HOST    = cfg.get('STREAM_HOST', STREAM_HOST)
+    TRIAL_HOURS    = int(cfg.get('TRIAL_HOURS', TRIAL_HOURS))
+
+def _validate_cfg_payload(data: dict) -> tuple[bool, str]:
+    # Block obvious issues that cause "missing user id" later
+    if not data.get("PANEL_BASE"):
+        return False, "PANEL_BASE is required"
+    if not data.get("PANEL_USER"):
+        return False, "PANEL_USER is required"
+    if not data.get("PANEL_PASS"):
+        return False, "PANEL_PASS is required"
+    if not data.get("PANEL_MEMBER_ID"):
+        return False, "PANEL_MEMBER_ID is required"
+    if "BOUQUETS" in data and not isinstance(data["BOUQUETS"], list):
+        return False, "BOUQUETS must be a list of IDs"
+    return True, "ok"
 
 # ---------------- DB ----------------
 def db_init():
@@ -164,6 +219,7 @@ def topbar(active: str="") -> str:
         <a href="/payments" {'style="background:#0e1625"' if active=='payments' else ''}>Uplate (WU / Crypto)</a>
         <a href="/trials" {'style="background:#0e1625"' if active=='trials' else ''}>Lista Testova</a>
         <a href="/clients" {'style="background:#0e1625"' if active=='clients' else ''}>Plaćeni Kupci</a>
+        <a href="/settings" {'style="background:#0e1625"' if active=='settings' else ''}>Settings</a>
       </div>
     </div></div>
     """
@@ -200,13 +256,18 @@ class Panel:
 
     def login(self) -> bool:
         if self.logged: return True
-        try: self.s.get(urljoin(self._base_norm(), 'login.php'), timeout=30)
-        except Exception: pass
+        try:
+            self.s.get(urljoin(self._base_norm(), 'login.php'), timeout=30)
+        except Exception:
+            pass
         r = self.s.post(urljoin(self._base_norm(), 'login.php'),
-                        data={'username': self.cfg.get("PANEL_USER", PANEL_USER), 'password': self.cfg.get("PANEL_PASS", PANEL_PASS)},
+                        data={'username': self.cfg.get("PANEL_USER", PANEL_USER),
+                              'password': self.cfg.get("PANEL_PASS", PANEL_PASS)},
                         allow_redirects=True, timeout=45)
         ok = (r.status_code in (200, 302)) and not any(x in (r.text or '').lower() for x in ('invalid','error','failed'))
-        if ok: self.logged = True; return True
+        if ok:
+            self.logged = True
+            return True
         raise RuntimeError("panel_login_failed")
 
     def _ensure(self) -> bool:
@@ -219,15 +280,17 @@ class Panel:
             return self.login()
 
     def _extract_uid_any(self, r) -> Optional[str]:
+        # Check redirect chain locations first
         chain = [r] + list(getattr(r, 'history', []))
         for resp in chain:
             loc = resp.headers.get('Location') or resp.headers.get('location') or ''
-            m = re.search(r'id=(\d+)', loc)
+            m = re.search(r'[\?&](?:id|user_id|uid)=(\d+)', loc, re.I)
             if m: return m.group(1)
+        # Fallback: search in HTML
         txt = (r.text or '')
-        m = re.search(r'user_reseller\.php\?id=(\d+)', txt, re.I)
+        m = re.search(r'user_reseller\.php\?(?:[^"\']*?)(?:id|user_id|uid)=(\d+)', txt, re.I)
         if m: return m.group(1)
-        m = re.search(r'[\?&]id=(\d+)', txt, re.I)
+        m = re.search(r'[\?&](?:id|user_id|uid)=(\d+)', txt, re.I)
         return m.group(1) if m else None
 
     def _parse_creds_from_edit_html(self, html_text: str) -> Optional[Dict[str,str]]:
@@ -304,25 +367,28 @@ class Panel:
         return {"user_id": uid, "username": creds['username'], "password": creds['password']}
 
     def common_form(self, forced_country: Optional[str], notes: str) -> Dict[str, Any]:
+        # Prefer numeric member/owner if present; some panels require this
+        owner_val = self.cfg.get("PANEL_MEMBER_ID", PANEL_MEMBER_ID) or self.cfg.get("PANEL_USER", PANEL_USER)
         form = {
-            'user_timezone': PANEL_TIMEZONE,
+            'user_timezone': self.cfg.get("PANEL_TIMEZONE", PANEL_TIMEZONE),
             'max_connections': '1',
             'reseller_notes': notes or '',
-            'bouquets_selected': json.dumps(BOUQUETS),
-            'owner': PANEL_USER,
-            'twobro_pin': PANEL_PIN,
-            'member_id': PANEL_MEMBER_ID,
+            'bouquets_selected': json.dumps(self.cfg.get("BOUQUETS", BOUQUETS) or []),
+            'owner': owner_val,
+            'twobro_pin': self.cfg.get("PANEL_PIN", PANEL_PIN),
+            'member_id': self.cfg.get("PANEL_MEMBER_ID", PANEL_MEMBER_ID),
         }
-        form['bouquet[]'] = [str(b) for b in BOUQUETS]
+        # Explicit bouquets list
+        form['bouquet[]'] = [str(b) for b in (self.cfg.get("BOUQUETS", BOUQUETS) or [])]
         return form
 
     def create_trial(self, forced_country: Optional[str], notes: str) -> Dict[str, Any]:
         self._ensure()
         base = self._fetch_create_form(trial=True)
         extra = self.common_form(forced_country, notes)
-        extra.update({'trial': '1', 'package': PKG_TRIAL, 'package_id': PKG_TRIAL})
+        extra.update({'trial': '1', 'package': self.cfg.get("PKG_TRIAL", PKG_TRIAL), 'package_id': self.cfg.get("PKG_TRIAL", PKG_TRIAL)})
         form = self._merge_form(base, extra)
-        form.setdefault('submit_user', '')
+        form.setdefault('submit_user', 'Save')
         url = urljoin(self._base_norm(), 'user_reseller.php?trial')
         r = self.s.post(url, data=form, timeout=60, allow_redirects=True)
         return self._finish_and_fetch_creds(r)
@@ -333,13 +399,13 @@ class Panel:
         extra = self.common_form(forced_country, notes)
         extra.update({'package': package_id, 'package_id': package_id})
         form = self._merge_form(base, extra)
-        form.setdefault('submit_user', '')
+        form.setdefault('submit_user', 'Save')
         url = urljoin(self._base_norm(), 'user_reseller.php')
         r = self.s.post(url, data=form, timeout=60, allow_redirects=True)
         return self._finish_and_fetch_creds(r)
 
 panel = Panel(CFG)
-app = FastAPI(title=f"{BRAND} Trial & Paid Admin (v7.1.0)")
+app = FastAPI(title=f"{BRAND} Trial & Paid Admin (v7.2.0)")
 
 # ---------------- auth ----------------
 def admin_ok(req: Request) -> bool:
@@ -383,6 +449,11 @@ def root(req: Request):
           <h2>💸 Uplate (WU / Crypto)</h2>
           <p class="muted">Generiši tekst sa instrukcijama i kopiraj jednim klikom.</p>
           <a class="btn" href="/payments">Otvori</a>
+        </div>
+        <div class="card">
+          <h2>⚙️ Settings</h2>
+          <p class="muted">Ažuriraj config.json (PANEL, PIN, BOuquets...).</p>
+          <a class="btn" href="/settings">Otvori</a>
         </div>
       </div>
     </div>
@@ -692,7 +763,7 @@ def payments_ui(req: Request):
           </form>
           <div id="wu_out" style="display:none">
             <div class="row" style="margin-top:12px"><button class="btn" id="wu_copy">Kopiraj tekst</button></div>
-            <textarea id="wu_msg" class="input" style="margin-top:12px"></textarea>
+            <textarea id="wu_msg" class="input" style="margin-top:12px;"></textarea>
           </div>
         </div>
 
@@ -706,7 +777,7 @@ def payments_ui(req: Request):
           <div id="cr_out" style="display:none">
             <div class="msg"><strong>ETH:</strong> {ETH_ADDR}<br><strong>SOL:</strong> {SOL_ADDR}</div>
             <div class="row" style="margin-top:12px"><button class="btn" id="cr_copy">Kopiraj tekst</button></div>
-            <textarea id="cr_msg" class="input" style="margin-top:12px"></textarea>
+            <textarea id="cr_msg" class="input" style="margin-top:12px;"></textarea>
           </div>
         </div>
       </div>
@@ -820,6 +891,104 @@ def clients_csv(req: Request, q: str = '', limit: int = 500):
                     r.get('m3u',''), r.get('expires_at',''), r.get('notes','')])
     return Response(buf.getvalue(), media_type='text/csv')
 
+# ---------------- Settings (UPDATE JSON) ----------------
+@app.get("/settings", response_class=HTMLResponse)
+def settings_ui(req: Request):
+    if not admin_ok(req): return RedirectResponse("/", status_code=302)
+    pretty = json.dumps(CFG, indent=2, ensure_ascii=False)
+    return HTMLResponse(f"""
+    <!doctype html><meta charset="utf-8"><title>Settings • {BRAND}</title>{_css()}
+    {topbar("settings")}
+    <div class="wrap">
+      <div class="card">
+        <h2>⚙️ UPDATE JSON (config.json)</h2>
+        <p class="muted">Nalepi ceo JSON i klikni <strong>Sačuvaj</strong>. Promene (osim PORT) važe odmah.</p>
+        <textarea id="cfg" class="input" style="height:420px;">{pretty}</textarea>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" id="save">Sačuvaj</button>
+          <a class="btn ghost" href="/">Nazad</a>
+        </div>
+        <div id="status" class="msg" style="display:none"></div>
+        <div id="err" class="error" style="display:none"></div>
+      </div>
+    </div>
+    <script>
+      const saveBtn = document.getElementById('save');
+      const ta = document.getElementById('cfg');
+      const ok = document.getElementById('status');
+      const err = document.getElementById('err');
+      saveBtn.addEventListener('click', async () => {{
+        ok.style.display='none'; err.style.display='none';
+        let payload;
+        try {{
+          payload = JSON.parse(ta.value);
+        }} catch(e) {{
+          err.style.display='block'; err.textContent = 'JSON greška: ' + e.message;
+          return;
+        }}
+        const r = await fetch('/settings/update', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify(payload)
+        }});
+        const txt = await r.text();
+        if (!r.ok) {{
+          err.style.display='block'; err.textContent = 'Greška: ' + txt;
+        }} else {{
+          ok.style.display='block'; ok.textContent = txt || 'Sačuvano.';
+        }}
+      }});
+    </script>
+    """)
+
+@app.post("/settings/update")
+async def settings_update(req: Request):
+    if not admin_ok(req):
+        raise HTTPException(401, "Unauthorized")
+
+    try:
+        data = await req.json()
+        if not isinstance(data, dict):
+            raise ValueError("Payload must be a JSON object")
+    except Exception as e:
+        raise HTTPException(400, f"Invalid JSON: {e}")
+
+    # Normalize + basic validation
+    if "PANEL_BASE" in data:
+        data["PANEL_BASE"] = _normalize_panel_base(data["PANEL_BASE"])
+    ok, msg = _validate_cfg_payload(data)
+    if not ok:
+        raise HTTPException(400, msg)
+
+    # Merge into current CFG (preserve anything not provided)
+    new_cfg = dict(CFG)
+    new_cfg.update(data)
+
+    # Write backup then save pretty JSON
+    try:
+        if os.path.exists(CFG_PATH):
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            bk = CFG_PATH + f".bak-{ts}"
+            with open(bk, "w", encoding="utf-8") as f:
+                json.dump(CFG, f, indent=2, ensure_ascii=False)
+        with open(CFG_PATH, "w", encoding="utf-8") as f:
+            json.dump(new_cfg, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to write config: {e}")
+
+    # Apply live (no restart)
+    CFG.update(new_cfg)
+    _apply_cfg_to_globals(CFG)
+
+    # Also update the Panel client to use the fresh cfg
+    try:
+        panel.cfg = CFG
+        panel.logged = False  # force re-login on next use
+    except Exception:
+        pass
+
+    return Response("Config updated. (Note: PORT changes require restart.)", media_type="text/plain")
+
 # ---------------- health ----------------
 @app.get('/healthz')
 def healthz():
@@ -827,4 +996,4 @@ def healthz():
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run("trial_admin_app:app", host="127.0.0.1", port=8088, reload=True)
+    uvicorn.run("trial_admin_app:app", host="127.0.0.1", port=PORT, reload=True)
