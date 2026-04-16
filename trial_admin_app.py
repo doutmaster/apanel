@@ -10,6 +10,8 @@ BalkanHDplus — Trial & Paid Admin (Standalone v7.2.0)
 """
 
 import os, time, json, re, secrets, string, requests, sqlite3, io, csv
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import urljoin, urlparse
 from typing import Dict, Any, Optional
 from bs4 import BeautifulSoup
@@ -34,15 +36,16 @@ def load_cfg() -> dict:
         "PANEL_TIMEZONE": "Europe/Vienna",
         "BOUQUETS": [],
         "PKG_TRIAL": "2",
+        "PKG_1M_TEST": "3",
         "PKG_1M": "3",
-        "PKG_3M": "4",
         "PKG_12M": "7",
+        "PRICE_1M_TEST": 6,
         "PRICE_1M": 10,
-        "PRICE_3M": 30,
         "PRICE_12M": 100,
-        "ETH_ADDR": "0x3b293c4d5182fc8a47b96ea416cbb55effd8b4b8",
-        "SOL_ADDR": "5CWmau5ecXGwjQC5Ccjp6YT13uHN6k2qP7E1LkxAaxtY",
-        "TUTORIALS_URL": "https://www.balkanhdplus.com/#tutorials",
+        "TUTORIALS_URL": "https://www.balkanhdplus.com/rs/tutoriali",
+        "WU_DEFAULT_COUNTRY": "Macedonia",
+        "BANK_NAME": "BalkanHDplus",
+        "BANK_IBAN": "LT893250046691800418",
         "STREAM_HOST": "http://balkanhdplus1.com:8080",
         "TRIAL_HOURS": 48
     }
@@ -80,50 +83,51 @@ PANEL_MEMBER_ID= CFG.get('PANEL_MEMBER_ID', '')
 PANEL_TIMEZONE = CFG.get('PANEL_TIMEZONE', 'Europe/Vienna')
 BOUQUETS       = CFG.get('BOUQUETS', [])
 
-PKG_TRIAL = str(CFG.get('PKG_TRIAL', '2'))
-PKG_1M    = str(CFG.get('PKG_1M',    '3'))
-PKG_3M    = str(CFG.get('PKG_3M',    '4'))
-PKG_12M   = str(CFG.get('PKG_12M',   '7'))
+PKG_TRIAL    = str(CFG.get('PKG_TRIAL', '2'))
+PKG_1M_TEST  = str(CFG.get('PKG_1M_TEST', CFG.get('PKG_1M', '3')))
+PKG_1M       = str(CFG.get('PKG_1M', '3'))
+PKG_12M      = str(CFG.get('PKG_12M', '7'))
 
-PRICE_1M  = float(CFG.get('PRICE_1M',  10))
-PRICE_3M  = float(CFG.get('PRICE_3M',  30))
-PRICE_12M = float(CFG.get('PRICE_12M',100))
+PRICE_1M_TEST = float(CFG.get('PRICE_1M_TEST', 6))
+PRICE_1M      = float(CFG.get('PRICE_1M', 10))
+PRICE_12M     = float(CFG.get('PRICE_12M', 100))
 
-ETH_ADDR  = CFG.get("ETH_ADDR", "0x3b293c4d5182fc8a47b96ea416cbb55effd8b4b8")
-SOL_ADDR  = CFG.get("SOL_ADDR", "5CWmau5ecXGwjQC5Ccjp6YT13uHN6k2qP7E1LkxAaxtY")
-
-TUTORIALS_URL = CFG.get('TUTORIALS_URL', "https://www.balkanhdplus.com/#tutorials")
-STREAM_HOST   = CFG.get('STREAM_HOST',   "http://balkanhdplus1.com:8080")
-TRIAL_HOURS   = int(CFG.get('TRIAL_HOURS', 48))
-PORT          = int(CFG.get('PORT', 8088))
+TUTORIALS_URL      = CFG.get('TUTORIALS_URL', "https://www.balkanhdplus.com/rs/tutoriali")
+STREAM_HOST        = CFG.get('STREAM_HOST', "http://balkanhdplus1.com:8080")
+TRIAL_HOURS        = int(CFG.get('TRIAL_HOURS', 48))
+WU_DEFAULT_COUNTRY = CFG.get("WU_DEFAULT_COUNTRY", "Macedonia")
+BANK_NAME          = CFG.get("BANK_NAME", "BalkanHDplus")
+BANK_IBAN          = CFG.get("BANK_IBAN", "LT893250046691800418")
+PORT               = int(CFG.get('PORT', 8088))
 
 def _apply_cfg_to_globals(cfg: dict):
     global BRAND, ADMIN_TOKEN, PANEL_BASE, PANEL_USER, PANEL_PASS, PANEL_PIN, PANEL_MEMBER_ID
-    global PANEL_TIMEZONE, BOUQUETS, PKG_TRIAL, PKG_1M, PKG_3M, PKG_12M
-    global PRICE_1M, PRICE_3M, PRICE_12M, ETH_ADDR, SOL_ADDR
-    global TUTORIALS_URL, STREAM_HOST, TRIAL_HOURS
+    global PANEL_TIMEZONE, BOUQUETS, PKG_TRIAL, PKG_1M_TEST, PKG_1M, PKG_12M
+    global PRICE_1M_TEST, PRICE_1M, PRICE_12M
+    global TUTORIALS_URL, STREAM_HOST, TRIAL_HOURS, WU_DEFAULT_COUNTRY, BANK_NAME, BANK_IBAN
 
-    BRAND          = cfg.get('BRAND', BRAND)
-    ADMIN_TOKEN    = str(cfg.get('ADMIN_TOKEN', ADMIN_TOKEN))
-    PANEL_BASE     = _normalize_panel_base(cfg.get('PANEL_BASE', PANEL_BASE))
-    PANEL_USER     = cfg.get('PANEL_USER', PANEL_USER)
-    PANEL_PASS     = cfg.get('PANEL_PASS', PANEL_PASS)
-    PANEL_PIN      = cfg.get('PANEL_PIN', PANEL_PIN)
-    PANEL_MEMBER_ID= cfg.get('PANEL_MEMBER_ID', PANEL_MEMBER_ID)
-    PANEL_TIMEZONE = cfg.get('PANEL_TIMEZONE', PANEL_TIMEZONE)
-    BOUQUETS       = cfg.get('BOUQUETS', BOUQUETS) or []
-    PKG_TRIAL      = str(cfg.get('PKG_TRIAL', PKG_TRIAL))
-    PKG_1M         = str(cfg.get('PKG_1M', PKG_1M))
-    PKG_3M         = str(cfg.get('PKG_3M', PKG_3M))
-    PKG_12M        = str(cfg.get('PKG_12M', PKG_12M))
-    PRICE_1M       = float(cfg.get('PRICE_1M', PRICE_1M))
-    PRICE_3M       = float(cfg.get('PRICE_3M', PRICE_3M))
-    PRICE_12M      = float(cfg.get('PRICE_12M', PRICE_12M))
-    ETH_ADDR       = cfg.get('ETH_ADDR', ETH_ADDR)
-    SOL_ADDR       = cfg.get('SOL_ADDR', SOL_ADDR)
-    TUTORIALS_URL  = cfg.get('TUTORIALS_URL', TUTORIALS_URL)
-    STREAM_HOST    = cfg.get('STREAM_HOST', STREAM_HOST)
-    TRIAL_HOURS    = int(cfg.get('TRIAL_HOURS', TRIAL_HOURS))
+    BRAND           = cfg.get('BRAND', BRAND)
+    ADMIN_TOKEN     = str(cfg.get('ADMIN_TOKEN', ADMIN_TOKEN))
+    PANEL_BASE      = _normalize_panel_base(cfg.get('PANEL_BASE', PANEL_BASE))
+    PANEL_USER      = cfg.get('PANEL_USER', PANEL_USER)
+    PANEL_PASS      = cfg.get('PANEL_PASS', PANEL_PASS)
+    PANEL_PIN       = cfg.get('PANEL_PIN', PANEL_PIN)
+    PANEL_MEMBER_ID = cfg.get('PANEL_MEMBER_ID', PANEL_MEMBER_ID)
+    PANEL_TIMEZONE  = cfg.get('PANEL_TIMEZONE', PANEL_TIMEZONE)
+    BOUQUETS        = cfg.get('BOUQUETS', BOUQUETS) or []
+    PKG_TRIAL       = str(cfg.get('PKG_TRIAL', PKG_TRIAL))
+    PKG_1M_TEST     = str(cfg.get('PKG_1M_TEST', PKG_1M_TEST))
+    PKG_1M          = str(cfg.get('PKG_1M', PKG_1M))
+    PKG_12M         = str(cfg.get('PKG_12M', PKG_12M))
+    PRICE_1M_TEST   = float(cfg.get('PRICE_1M_TEST', PRICE_1M_TEST))
+    PRICE_1M        = float(cfg.get('PRICE_1M', PRICE_1M))
+    PRICE_12M       = float(cfg.get('PRICE_12M', PRICE_12M))
+    TUTORIALS_URL   = cfg.get('TUTORIALS_URL', TUTORIALS_URL)
+    STREAM_HOST     = cfg.get('STREAM_HOST', STREAM_HOST)
+    TRIAL_HOURS     = int(cfg.get('TRIAL_HOURS', TRIAL_HOURS))
+    WU_DEFAULT_COUNTRY = cfg.get('WU_DEFAULT_COUNTRY', WU_DEFAULT_COUNTRY)
+    BANK_NAME       = cfg.get('BANK_NAME', BANK_NAME)
+    BANK_IBAN       = cfg.get('BANK_IBAN', BANK_IBAN)
 
 def _validate_cfg_payload(data: dict) -> tuple[bool, str]:
     # Block obvious issues that cause "missing user id" later
@@ -216,7 +220,7 @@ def topbar(active: str="") -> str:
         <a href="/" {'style="background:#0e1625"' if active=='home' else ''}>Dashboard</a>
         <a href="/manual-trial" {'style="background:#0e1625"' if active=='trial' else ''}>Kreiraj Test</a>
         <a href="/manual-paid" {'style="background:#0e1625"' if active=='paid' else ''}>Kreiraj Plaćeni</a>
-        <a href="/payments" {'style="background:#0e1625"' if active=='payments' else ''}>Uplate (WU / Crypto)</a>
+        <a href="/payments" {'style="background:#0e1625"' if active=='payments' else ''}>Uplate</a>
         <a href="/trials" {'style="background:#0e1625"' if active=='trials' else ''}>Lista Testova</a>
         <a href="/clients" {'style="background:#0e1625"' if active=='clients' else ''}>Plaćeni Kupci</a>
         <a href="/settings" {'style="background:#0e1625"' if active=='settings' else ''}>Settings</a>
@@ -240,6 +244,21 @@ def _m3u(username: str, password: str) -> str:
     host = base.hostname or "balkanhdplus1.com"
     scheme = base.scheme or "http"
     return f"{scheme}://{host}:8080/get.php?username={username}&password={password}&type=m3u_plus&output=mpegts"
+
+def _fmt_local_ts(ts: int) -> str:
+    tz_name = PANEL_TIMEZONE or "Europe/Vienna"
+    try:
+        dt = datetime.fromtimestamp(ts, ZoneInfo(tz_name))
+    except Exception:
+        dt = datetime.fromtimestamp(ts)
+    return dt.strftime("%d.%m.%Y %H:%M")
+
+def _plan_catalog() -> dict:
+    return {
+        "1m_test": {"package": PKG_1M_TEST, "days": 30, "price": PRICE_1M_TEST, "label": "1 mesec TEST (€6)"},
+        "1m": {"package": PKG_1M, "days": 30, "price": PRICE_1M, "label": "1 mesec Regular (€10)"},
+        "12m": {"package": PKG_12M, "days": 365, "price": PRICE_12M, "label": "12 meseci (€100)"},
+    }
 
 # ---------------- Panel client ----------------
 class Panel:
@@ -446,7 +465,7 @@ def root(req: Request):
           <a class="btn" href="/manual-paid">Kreni</a>
         </div>
         <div class="card">
-          <h2>💸 Uplate (WU / Crypto)</h2>
+          <h2>💸 Uplate</h2>
           <p class="muted">Generiši tekst sa instrukcijama i kopiraj jednim klikom.</p>
           <a class="btn" href="/payments">Otvori</a>
         </div>
@@ -524,68 +543,94 @@ ep('copyAll').addEventListener('click', () => { copyText(ep('msg').value); });
 </script>
 """
 
-def script_payments(eth: str, sol: str) -> str:
+def script_payments() -> str:
+    plans = _plan_catalog()
     return f"""
 <script>
 (function(){{
-  function orderId(){{
-    const d=new Date();
-    const y=d.getFullYear();
-    const m=('0'+(d.getMonth()+1)).slice(-2);
-    const day=('0'+d.getDate()).slice(-2);
-    const rand=(''+Math.floor(100000+Math.random()*900000));
-    return 'BHP-'+y+m+day+'-'+rand;
+  const PLAN_INFO = {json.dumps(plans)};
+  const $ = (id)=>document.getElementById(id);
+
+  function syncAmount(prefix){{
+    const plan = $(prefix + '_plan').value;
+    const info = PLAN_INFO[plan];
+    if (!info) return;
+    const amount = info.price.toFixed(0);
+    const amountEl = $(prefix + '_amount');
+    if (amountEl) amountEl.value = amount;
   }}
-  function copyText(s){{ navigator.clipboard.writeText(s).then(()=>{{ alert('Kopirano!'); }}); }}
 
-  // ---- Western Union ----
-  const wu = (id)=>document.getElementById(id);
-  document.addEventListener('DOMContentLoaded', () => {{
-    const wuGo = document.getElementById('wu_go');
-    if (wuGo) wuGo.addEventListener('click', () => {{
-      const name = (wu('wu_name').value || '').trim();
-      const country = (wu('wu_country').value || '').trim();
-      const city = (wu('wu_city').value || '').trim();
-      if (!name || !country){{ alert('Unesite ime i državu.'); return; }}
-      const where = country + (city ? (', '+city) : '');
-      const oid = orderId();
-      const txt =
-        '💸 Porudžbina ' + oid + ' — Western Union podaci:\\n'
-        + 'Ime primaoca: ' + name + '\\n'
-        + 'Država: ' + where + '\\n\\n'
-        + 'Nakon uplate pošaljite MTCN (10 cifara) i screenshot potvrde.\\n'
-        + 'Kada proverimo uplatu, aktiviraćemo pretplatu.';
-      wu('wu_out').style.display='block';
-      wu('wu_msg').value = txt;
-    }});
-    const wuCopy = document.getElementById('wu_copy');
-    if (wuCopy) wuCopy.addEventListener('click', ()=>{{ copyText(wu('wu_msg').value); }});
-  }});
+  function planLabel(key){{
+    return (PLAN_INFO[key] && PLAN_INFO[key].label) ? PLAN_INFO[key].label : key;
+  }}
 
-  // ---- Crypto ----
-  const ETH = '{eth}';
-  const SOL = '{sol}';
-  const cr = (id)=>document.getElementById(id);
   document.addEventListener('DOMContentLoaded', () => {{
-    const crGo = document.getElementById('cr_go');
-    if (crGo) crGo.addEventListener('click', () => {{
-      const note = (cr('cr_note').value || '').trim();
-      const oid = orderId();
-      const txt =
-        '🪙 Porudžbina ' + oid + ' — Kripto uplata (ETH / SOL)\\n\\n'
-        + 'ETH: ' + ETH + '\\n'
-        + 'SOL: ' + SOL + '\\n\\n'
-        + (note? note + '\\n' : '')
-        + 'Pošaljite *screenshot* i *TX hash*. Čim proverimo, aktiviramo pretplatu.';
-      cr('cr_out').style.display='block';
-      cr('cr_msg').value = txt;
+    ['wu','bank','psc'].forEach(prefix => {{
+      const sel = $(prefix + '_plan');
+      if (sel) {{
+        sel.addEventListener('change', () => syncAmount(prefix));
+        syncAmount(prefix);
+      }}
     }});
-    const crCopy = document.getElementById('cr_copy');
-    if (crCopy) crCopy.addEventListener('click', ()=>{{ copyText(cr('cr_msg').value); }});
+
+    $('wu_go')?.addEventListener('click', () => {{
+      const receiver = ($('wu_name').value || '').trim();
+      const country = ($('wu_country').value || '').trim() || {json.dumps(WU_DEFAULT_COUNTRY)};
+      const amount = ($('wu_amount').value || '').trim();
+      const plan = $('wu_plan').value;
+      if (!receiver) {{ alert('Unesite ime primaoca.'); return; }}
+      const txt =
+        '💸 Western Union podaci:\n'
+        + 'Vrsta linije: ' + planLabel(plan) + '\n'
+        + 'Iznos: €' + amount + '\n'
+        + 'Ime primaoca: ' + receiver + '\n'
+        + 'Država: ' + country + '\n\n'
+        + 'Nakon uplate pošaljite MTCN (10 cifara) i screenshot potvrde.\n'
+        + 'Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.';
+      $('wu_out').style.display='block';
+      $('wu_msg').value = txt;
+    }});
+
+    $('bank_go')?.addEventListener('click', () => {{
+      const amount = ($('bank_amount').value || '').trim();
+      const plan = $('bank_plan').value;
+      const txt =
+        '🏦 Bank transfer podaci:\n'
+        + 'Vrsta linije: ' + planLabel(plan) + '\n'
+        + 'Iznos: €' + amount + '\n'
+        + 'Name: {BANK_NAME}\n'
+        + 'IBAN: {BANK_IBAN}\n\n'
+        + 'Uplatu pošaljite kao fast transfer.\n'
+        + 'Nakon uplate pošaljite screenshot potvrde.\n'
+        + 'Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.';
+      $('bank_out').style.display='block';
+      $('bank_msg').value = txt;
+    }});
+
+    $('psc_go')?.addEventListener('click', () => {{
+      const amount = ($('psc_amount').value || '').trim();
+      const plan = $('psc_plan').value;
+      const txt =
+        '💳 Paysafecard uplata:\n'
+        + 'Vrsta linije: ' + planLabel(plan) + '\n'
+        + 'Iznos: €' + amount + '\n\n'
+        + 'Pošaljite paysafecard kod i screenshot potvrde.\n'
+        + 'Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.';
+      $('psc_out').style.display='block';
+      $('psc_msg').value = txt;
+    }});
+
+    ['wu_copy','bank_copy','psc_copy'].forEach(id => {{
+      $(id)?.addEventListener('click', () => {{
+        const target = id.replace('_copy', '_msg');
+        navigator.clipboard.writeText($(target).value || '').then(() => alert('Kopirano!'));
+      }});
+    }});
   }});
 }})();
 </script>
 """
+
 
 # ---------------- Trial UI ----------------
 @app.get("/manual-trial", response_class=HTMLResponse)
@@ -631,19 +676,18 @@ def manual_trial_new(country: str = Form("AT"), name: str = Form(""), phone: str
         raise HTTPException(502, f"Panel error: {e}")
     username, password = res["username"], res["password"]
     exp = int(time.time()) + TRIAL_HOURS * 3600
-    exp_human = time.strftime("%d.%m.%Y %H:%M UTC", time.gmtime(exp))
+    exp_human = _fmt_local_ts(exp)
 
     m3u = _m3u(username, password)
     url8000 = "http://balkanhdplus1.com:8000"
     url8080 = "http://balkanhdplus1.com:8080"
     wa = (
-        f"✅ Test aktiviran ({TRIAL_HOURS}h)\n\n"
+        f"✅ Test aktiviran\n\n"
         f"• Username: {username}\n"
         f"• Password: {password}\n"
         f"• M3U: {m3u}\n"
         f"• URL (Smarters/TV): {url8000}\n"
         f"• URL: {url8080}\n\n"
-        f"Ističe: {exp_human}\n"
         f"Uputstva: {TUTORIALS_URL}"
     )
     try:
@@ -667,8 +711,8 @@ def manual_paid_ui(req: Request):
         <form id="p" onsubmit="return false;" class="row">
           <div class="col"><label>Plan</label>
             <select class="input" id="plan">
-              <option value="1m">1 mesec (€{PRICE_1M:.0f})</option>
-              <option value="3m">3 meseca (€{PRICE_3M:.0f})</option>
+              <option value="1m_test">1 mesec - TEST MESEC (€{PRICE_1M_TEST:.0f})</option>
+              <option value="1m">1 mesec - Regular (€{PRICE_1M:.0f})</option>
               <option value="12m">12 meseci (€{PRICE_12M:.0f})</option>
             </select>
           </div>
@@ -698,38 +742,38 @@ def manual_paid_ui(req: Request):
 
 @app.post("/manual-paid/new")
 def manual_paid_new(plan: str = Form("1m"), country: str = Form("AT"), name: str = Form(""), phone: str = Form("")):
-    PLAN_TO_PKG   = { '1m': PKG_1M, '3m': PKG_3M, '12m': PKG_12M }
-    PLAN_TO_DAYS  = { '1m': 30, '3m': 90, '12m': 365 }
-    PLAN_TO_PRICE = { '1m': PRICE_1M, '3m': PRICE_3M, '12m': PRICE_12M }
-    if plan not in PLAN_TO_PKG: raise HTTPException(400, "Pogrešan plan")
+    plans = _plan_catalog()
+    if plan not in plans:
+        raise HTTPException(400, "Pogrešan plan")
 
+    meta = plans[plan]
     cc = _normalize_cc(country) or "AT"
     notes = f"PAID_MANUAL | plan={plan}; name={name}; phone={phone}".strip()
     try:
-        res = panel.create_paid(PLAN_TO_PKG[plan], cc, notes)
+        res = panel.create_paid(meta["package"], cc, notes)
     except Exception as e:
         raise HTTPException(502, f"Panel error: {e}")
 
     username, password = res["username"], res["password"]
-    days = PLAN_TO_DAYS[plan]
-    exp = int(time.time()) + days*86400
-    exp_human = time.strftime("%d.%m.%Y %H:%M UTC", time.gmtime(exp))
+    days = int(meta["days"])
+    exp = int(time.time()) + days * 86400
+    exp_human = _fmt_local_ts(exp)
 
     m3u = _m3u(username, password)
     url8000 = "http://balkanhdplus1.com:8000"
     url8080 = "http://balkanhdplus1.com:8080"
-    price = PLAN_TO_PRICE[plan]
-    plan_human = { '1m':'1 mesec', '3m':'3 meseca', '12m':'12 meseci' }[plan]
+    price = float(meta["price"])
+    plan_human = meta["label"]
 
     msg = (
         f"✅ Pretplata aktivirana\n\n"
-        f"• Plan: {plan_human} (€{price:.0f})\n"
+        f"• Plan: {plan_human}\n"
         f"• Username: {username}\n"
         f"• Password: {password}\n"
         f"• M3U: {m3u}\n"
         f"• URL (Smarters/TV): {url8000}\n"
         f"• URL: {url8080}\n\n"
-        f"Vredi do: {exp_human}\n"
+        f"Važi do: {exp_human}\n"
         f"Uputstva: {TUTORIALS_URL}"
     )
     try:
@@ -748,17 +792,24 @@ def manual_paid_new(plan: str = Form("1m"), country: str = Form("AT"), name: str
 def payments_ui(req: Request):
     if not admin_ok(req): return RedirectResponse("/", status_code=302)
     return HTMLResponse(f"""
-    <!doctype html><meta charset="utf-8"><title>Uplate (WU/Crypto) • {BRAND}</title>{_css()}
+    <!doctype html><meta charset="utf-8"><title>Uplate • {BRAND}</title>{_css()}
     {topbar("payments")}
     <div class="wrap">
       <div class="grid">
         <div class="card">
-          <h2>💸 Western Union — generiši tekst</h2>
-          <p class="muted">Unesi ime primaoca i državu (opciono grad) pa klikni Generiši.</p>
+          <h2>💸 Western Union</h2>
+          <p class="muted">Prvo izaberi liniju, zatim generiši tekst za slanje klijentu.</p>
           <form id="wu" onsubmit="return false;" class="row">
-            <div class="col"><label>Ime primaoca</label><input id="wu_name" class="input" placeholder="npr. Marko Marković"></div>
-            <div class="col"><label>Država</label><input id="wu_country" class="input" placeholder="npr. Austria" value="Austria"></div>
-            <div class="col"><label>Grad (opciono)</label><input id="wu_city" class="input" placeholder="npr. Wien"></div>
+            <div class="col"><label>Vrsta linije</label>
+              <select id="wu_plan" class="input">
+                <option value="1m_test">1 mesec - TEST MESEC (€{PRICE_1M_TEST:.0f})</option>
+                <option value="1m">1 mesec - Regular (€{PRICE_1M:.0f})</option>
+                <option value="12m">12 meseci (€{PRICE_12M:.0f})</option>
+              </select>
+            </div>
+            <div class="col"><label>Iznos (€)</label><input id="wu_amount" class="input"></div>
+            <div class="col"><label>Ime primaoca</label><input id="wu_name" class="input" placeholder="npr. Hristijan Vlaoski"></div>
+            <div class="col"><label>Država</label><input id="wu_country" class="input" value="{WU_DEFAULT_COUNTRY}"></div>
             <div class="col"><button class="btn" id="wu_go">Generiši</button></div>
           </form>
           <div id="wu_out" style="display:none">
@@ -768,21 +819,48 @@ def payments_ui(req: Request):
         </div>
 
         <div class="card">
-          <h2>🪙 Crypto — generiši tekst</h2>
-          <p class="muted">Adrese iz konfiguracije (ETH/SOL). Klik na Generiši pa Kopiraj.</p>
-          <form id="cr" onsubmit="return false;" class="row">
-            <div class="col"><label>Napomena (opciono)</label><input id="cr_note" class="input" placeholder="npr. Pošaljite TX hash i screenshot"></div>
-            <div class="col"><button class="btn" id="cr_go">Generiši</button></div>
+          <h2>🏦 Bank transfer</h2>
+          <p class="muted">Generiši gotov tekst sa bank podacima.</p>
+          <form id="bank" onsubmit="return false;" class="row">
+            <div class="col"><label>Vrsta linije</label>
+              <select id="bank_plan" class="input">
+                <option value="1m_test">1 mesec - TEST MESEC (€{PRICE_1M_TEST:.0f})</option>
+                <option value="1m">1 mesec - Regular (€{PRICE_1M:.0f})</option>
+                <option value="12m">12 meseci (€{PRICE_12M:.0f})</option>
+              </select>
+            </div>
+            <div class="col"><label>Iznos (€)</label><input id="bank_amount" class="input"></div>
+            <div class="col"><button class="btn" id="bank_go">Generiši</button></div>
           </form>
-          <div id="cr_out" style="display:none">
-            <div class="msg"><strong>ETH:</strong> {ETH_ADDR}<br><strong>SOL:</strong> {SOL_ADDR}</div>
-            <div class="row" style="margin-top:12px"><button class="btn" id="cr_copy">Kopiraj tekst</button></div>
-            <textarea id="cr_msg" class="input" style="margin-top:12px;"></textarea>
+          <div id="bank_out" style="display:none">
+            <div class="msg"><strong>Name:</strong> {BANK_NAME}<br><strong>IBAN:</strong> {BANK_IBAN}</div>
+            <div class="row" style="margin-top:12px"><button class="btn" id="bank_copy">Kopiraj tekst</button></div>
+            <textarea id="bank_msg" class="input" style="margin-top:12px;"></textarea>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>💳 Paysafecard</h2>
+          <p class="muted">Generiši tekst za paysafecard uplatu.</p>
+          <form id="psc" onsubmit="return false;" class="row">
+            <div class="col"><label>Vrsta linije</label>
+              <select id="psc_plan" class="input">
+                <option value="1m_test">1 mesec - TEST MESEC (€{PRICE_1M_TEST:.0f})</option>
+                <option value="1m">1 mesec - Regular (€{PRICE_1M:.0f})</option>
+                <option value="12m">12 meseci (€{PRICE_12M:.0f})</option>
+              </select>
+            </div>
+            <div class="col"><label>Iznos (€)</label><input id="psc_amount" class="input"></div>
+            <div class="col"><button class="btn" id="psc_go">Generiši</button></div>
+          </form>
+          <div id="psc_out" style="display:none">
+            <div class="row" style="margin-top:12px"><button class="btn" id="psc_copy">Kopiraj tekst</button></div>
+            <textarea id="psc_msg" class="input" style="margin-top:12px;"></textarea>
           </div>
         </div>
       </div>
     </div>
-    """ + script_payments(ETH_ADDR, SOL_ADDR))
+    """ + script_payments())
 
 # ---------------- Trials/Clients dashboards + CSV ----------------
 @app.get('/trials', response_class=HTMLResponse)
