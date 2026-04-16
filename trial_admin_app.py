@@ -551,13 +551,21 @@ def script_payments() -> str:
   const PLAN_INFO = {json.dumps(plans)};
   const $ = (id)=>document.getElementById(id);
 
-  function syncAmount(prefix){{
-    const plan = $(prefix + '_plan').value;
+  function syncAmount(){{
+    const plan = $('pay_plan')?.value;
     const info = PLAN_INFO[plan];
     if (!info) return;
     const amount = info.price.toFixed(0);
-    const amountEl = $(prefix + '_amount');
+    const amountEl = $('pay_amount');
     if (amountEl) amountEl.value = amount;
+  }}
+
+  function syncMethodFields(){{
+    const method = $('pay_method')?.value;
+    const wuBox = $('wu_fields');
+    const bankBox = $('bank_fields');
+    if (wuBox) wuBox.style.display = method === 'wu' ? 'flex' : 'none';
+    if (bankBox) bankBox.style.display = method === 'bank' ? 'block' : 'none';
   }}
 
   function planLabel(key){{
@@ -565,66 +573,54 @@ def script_payments() -> str:
   }}
 
   document.addEventListener('DOMContentLoaded', () => {{
-    ['wu','bank','psc'].forEach(prefix => {{
-      const sel = $(prefix + '_plan');
-      if (sel) {{
-        sel.addEventListener('change', () => syncAmount(prefix));
-        syncAmount(prefix);
+    $('pay_plan')?.addEventListener('change', syncAmount);
+    $('pay_method')?.addEventListener('change', syncMethodFields);
+    syncAmount();
+    syncMethodFields();
+
+    $('pay_go')?.addEventListener('click', () => {{
+      const method = $('pay_method').value;
+      const plan = $('pay_plan').value;
+      const amount = ($('pay_amount').value || '').trim();
+      let txt = '';
+
+      if (method === 'wu') {{
+        const receiver = ($('wu_name').value || '').trim();
+        const country = ($('wu_country').value || '').trim() || {json.dumps(WU_DEFAULT_COUNTRY)};
+        if (!receiver) {{ alert('Unesite ime primaoca.'); return; }}
+        txt = `💸 Western Union podaci:
+Vrsta linije: ${{planLabel(plan)}}
+Iznos: €${{amount}}
+Ime primaoca: ${{receiver}}
+Država: ${{country}}
+
+Nakon uplate pošaljite MTCN (10 cifara) i screenshot potvrde.
+Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.`;
+      }} else if (method === 'bank') {{
+        txt = `🏦 Bank transfer podaci:
+Vrsta linije: ${{planLabel(plan)}}
+Iznos: €${{amount}}
+Name: {BANK_NAME}
+IBAN: {BANK_IBAN}
+
+Uplatu pošaljite kao fast transfer.
+Nakon uplate pošaljite screenshot potvrde.
+Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.`;
+      }} else if (method === 'psc') {{
+        txt = `💳 Paysafecard uplata:
+Vrsta linije: ${{planLabel(plan)}}
+Iznos: €${{amount}}
+
+Pošaljite paysafecard kod i screenshot potvrde.
+Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.`;
       }}
+
+      $('pay_out').style.display = 'block';
+      $('pay_msg').value = txt;
     }});
 
-    $('wu_go')?.addEventListener('click', () => {{
-      const receiver = ($('wu_name').value || '').trim();
-      const country = ($('wu_country').value || '').trim() || {json.dumps(WU_DEFAULT_COUNTRY)};
-      const amount = ($('wu_amount').value || '').trim();
-      const plan = $('wu_plan').value;
-      if (!receiver) {{ alert('Unesite ime primaoca.'); return; }}
-      const txt =
-        '💸 Western Union podaci:\n'
-        + 'Vrsta linije: ' + planLabel(plan) + '\n'
-        + 'Iznos: €' + amount + '\n'
-        + 'Ime primaoca: ' + receiver + '\n'
-        + 'Država: ' + country + '\n\n'
-        + 'Nakon uplate pošaljite MTCN (10 cifara) i screenshot potvrde.\n'
-        + 'Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.';
-      $('wu_out').style.display='block';
-      $('wu_msg').value = txt;
-    }});
-
-    $('bank_go')?.addEventListener('click', () => {{
-      const amount = ($('bank_amount').value || '').trim();
-      const plan = $('bank_plan').value;
-      const txt =
-        '🏦 Bank transfer podaci:\n'
-        + 'Vrsta linije: ' + planLabel(plan) + '\n'
-        + 'Iznos: €' + amount + '\n'
-        + 'Name: {BANK_NAME}\n'
-        + 'IBAN: {BANK_IBAN}\n\n'
-        + 'Uplatu pošaljite kao fast transfer.\n'
-        + 'Nakon uplate pošaljite screenshot potvrde.\n'
-        + 'Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.';
-      $('bank_out').style.display='block';
-      $('bank_msg').value = txt;
-    }});
-
-    $('psc_go')?.addEventListener('click', () => {{
-      const amount = ($('psc_amount').value || '').trim();
-      const plan = $('psc_plan').value;
-      const txt =
-        '💳 Paysafecard uplata:\n'
-        + 'Vrsta linije: ' + planLabel(plan) + '\n'
-        + 'Iznos: €' + amount + '\n\n'
-        + 'Pošaljite paysafecard kod i screenshot potvrde.\n'
-        + 'Kada proverimo uplatu, aktiviraćemo pretplatu i dobićete informacije.';
-      $('psc_out').style.display='block';
-      $('psc_msg').value = txt;
-    }});
-
-    ['wu_copy','bank_copy','psc_copy'].forEach(id => {{
-      $(id)?.addEventListener('click', () => {{
-        const target = id.replace('_copy', '_msg');
-        navigator.clipboard.writeText($(target).value || '').then(() => alert('Kopirano!'));
-      }});
+    $('pay_copy')?.addEventListener('click', () => {{
+      navigator.clipboard.writeText($('pay_msg').value || '').then(() => alert('Kopirano!'));
     }});
   }});
 }})();
@@ -795,68 +791,57 @@ def payments_ui(req: Request):
     <!doctype html><meta charset="utf-8"><title>Uplate • {BRAND}</title>{_css()}
     {topbar("payments")}
     <div class="wrap">
-      <div class="grid">
-        <div class="card">
-          <h2>💸 Western Union</h2>
-          <p class="muted">Prvo izaberi liniju, zatim generiši tekst za slanje klijentu.</p>
-          <form id="wu" onsubmit="return false;" class="row">
-            <div class="col"><label>Vrsta linije</label>
-              <select id="wu_plan" class="input">
-                <option value="1m_test">1 mesec - TEST MESEC (€{PRICE_1M_TEST:.0f})</option>
-                <option value="1m">1 mesec - Regular (€{PRICE_1M:.0f})</option>
-                <option value="12m">12 meseci (€{PRICE_12M:.0f})</option>
-              </select>
-            </div>
-            <div class="col"><label>Iznos (€)</label><input id="wu_amount" class="input"></div>
-            <div class="col"><label>Ime primaoca</label><input id="wu_name" class="input" placeholder="npr. Hristijan Vlaoski"></div>
-            <div class="col"><label>Država</label><input id="wu_country" class="input" value="{WU_DEFAULT_COUNTRY}"></div>
-            <div class="col"><button class="btn" id="wu_go">Generiši</button></div>
-          </form>
-          <div id="wu_out" style="display:none">
-            <div class="row" style="margin-top:12px"><button class="btn" id="wu_copy">Kopiraj tekst</button></div>
-            <textarea id="wu_msg" class="input" style="margin-top:12px;"></textarea>
+      <div class="card">
+        <h2>💳 Uplate</h2>
+        <p class="muted">Sve je sada na jednom mestu: prvo izaberi vrstu linije, zatim način plaćanja, unesi potrebne podatke i generiši gotov tekst za klijenta.</p>
+
+        <form id="pay" onsubmit="return false;" class="row">
+          <div class="col">
+            <label>Vrsta linije</label>
+            <select id="pay_plan" class="input">
+              <option value="1m_test">1 mesec - TEST MESEC (€{PRICE_1M_TEST:.0f})</option>
+              <option value="1m">1 mesec - Regular (€{PRICE_1M:.0f})</option>
+              <option value="12m">12 meseci (€{PRICE_12M:.0f})</option>
+            </select>
+          </div>
+
+          <div class="col">
+            <label>Način plaćanja</label>
+            <select id="pay_method" class="input">
+              <option value="wu">Western Union</option>
+              <option value="bank">Bank transfer</option>
+              <option value="psc">Paysafecard</option>
+            </select>
+          </div>
+
+          <div class="col">
+            <label>Iznos (€)</label>
+            <input id="pay_amount" class="input">
+          </div>
+        </form>
+
+        <div id="wu_fields" class="row" style="margin-top:12px;">
+          <div class="col">
+            <label>Ime primaoca</label>
+            <input id="wu_name" class="input" placeholder="npr. Hristijan Vlaoski">
+          </div>
+          <div class="col">
+            <label>Država</label>
+            <input id="wu_country" class="input" value="{WU_DEFAULT_COUNTRY}">
           </div>
         </div>
 
-        <div class="card">
-          <h2>🏦 Bank transfer</h2>
-          <p class="muted">Generiši gotov tekst sa bank podacima.</p>
-          <form id="bank" onsubmit="return false;" class="row">
-            <div class="col"><label>Vrsta linije</label>
-              <select id="bank_plan" class="input">
-                <option value="1m_test">1 mesec - TEST MESEC (€{PRICE_1M_TEST:.0f})</option>
-                <option value="1m">1 mesec - Regular (€{PRICE_1M:.0f})</option>
-                <option value="12m">12 meseci (€{PRICE_12M:.0f})</option>
-              </select>
-            </div>
-            <div class="col"><label>Iznos (€)</label><input id="bank_amount" class="input"></div>
-            <div class="col"><button class="btn" id="bank_go">Generiši</button></div>
-          </form>
-          <div id="bank_out" style="display:none">
-            <div class="msg"><strong>Name:</strong> {BANK_NAME}<br><strong>IBAN:</strong> {BANK_IBAN}</div>
-            <div class="row" style="margin-top:12px"><button class="btn" id="bank_copy">Kopiraj tekst</button></div>
-            <textarea id="bank_msg" class="input" style="margin-top:12px;"></textarea>
-          </div>
+        <div id="bank_fields" style="display:none; margin-top:12px;">
+          <div class="msg"><strong>Name:</strong> {BANK_NAME}<br><strong>IBAN:</strong> {BANK_IBAN}</div>
         </div>
 
-        <div class="card">
-          <h2>💳 Paysafecard</h2>
-          <p class="muted">Generiši tekst za paysafecard uplatu.</p>
-          <form id="psc" onsubmit="return false;" class="row">
-            <div class="col"><label>Vrsta linije</label>
-              <select id="psc_plan" class="input">
-                <option value="1m_test">1 mesec - TEST MESEC (€{PRICE_1M_TEST:.0f})</option>
-                <option value="1m">1 mesec - Regular (€{PRICE_1M:.0f})</option>
-                <option value="12m">12 meseci (€{PRICE_12M:.0f})</option>
-              </select>
-            </div>
-            <div class="col"><label>Iznos (€)</label><input id="psc_amount" class="input"></div>
-            <div class="col"><button class="btn" id="psc_go">Generiši</button></div>
-          </form>
-          <div id="psc_out" style="display:none">
-            <div class="row" style="margin-top:12px"><button class="btn" id="psc_copy">Kopiraj tekst</button></div>
-            <textarea id="psc_msg" class="input" style="margin-top:12px;"></textarea>
-          </div>
+        <div class="row" style="margin-top:12px;">
+          <button class="btn" id="pay_go">Generiši tekst</button>
+          <button class="btn ghost" id="pay_copy" type="button">Kopiraj tekst</button>
+        </div>
+
+        <div id="pay_out" style="display:none; margin-top:12px;">
+          <textarea id="pay_msg" class="input" style="height:220px;"></textarea>
         </div>
       </div>
     </div>
